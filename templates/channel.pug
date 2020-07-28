@@ -45,10 +45,11 @@ html(lang="en")
                 span#modflair.label.label-default.pull-right.pointer Name Color
               #userlist
               #messagebuffer.linewrap
-              input#chatline.form-control(type="text", maxlength="240", style="display: none")
-              #guestlogin.input-group
-                span.input-group-addon Guest login
-                input#guestname.form-control(type="text", placeholder="Name")
+              form(action="javascript:void(0)")
+                input#chatline.form-control(type="text", maxlength="320", style="display: none")
+                #guestlogin.input-group
+                  span.input-group-addon Guest login
+                  input#guestname.form-control(type="text", placeholder="Name")
             #videowrap.col-lg-7.col-md-7
               p#videowrap-header
                 span#resize-video-smaller.glyphicon.glyphicon-minus.pointer(title="Make the video smaller")
@@ -111,9 +112,9 @@ html(lang="en")
                   .input-group
                     input#mediaurl.form-control(type="text", placeholder="Media URL")
                     span.input-group-btn
-                      button#queue_next.btn.btn-default Next
+                      button#queue_next.btn.btn-default Queue next
                     span.input-group-btn
-                      button#queue_end.btn.btn-default At End
+                      button#queue_end.btn.btn-default Queue last
                   .checkbox
                     label
                       input.add-temp(type="checkbox")
@@ -124,9 +125,9 @@ html(lang="en")
                   .input-group
                     input#customembed-title.form-control(type="text", placeholder="Title (optional)")
                     span.input-group-btn
-                      button#ce_queue_next.btn.btn-default Next
+                      button#ce_queue_next.btn.btn-default Queue next
                     span.input-group-btn
-                      button#ce_queue_end.btn.btn-default At End
+                      button#ce_queue_end.btn.btn-default Queue last
                   .checkbox
                     label
                       input.add-temp(type="checkbox")

@@ -144,7 +144,7 @@ function formatUserlistItem(div) {
         $("<strong/>").text(data.name).appendTo(profile);
 
         var meta = div.data("meta") || {};
-        if (meta.ip) {
+        if (meta.ip && USEROPTS.show_ip_in_tooltip) {
             $("<br/>").appendTo(profile);
             $("<em/>").text(meta.ip).appendTo(profile);
         }
@@ -220,14 +220,19 @@ function addUserDropdown(entry) {
             if(IGNORED.indexOf(name) == -1) {
                 ignore.text("Unignore User");
                 IGNORED.push(name);
+                entry.addClass("userlist-ignored");
             } else {
                 ignore.text("Ignore User");
                 IGNORED.splice(IGNORED.indexOf(name), 1);
+                entry.removeClass("userlist-ignored");
             }
+            setOpt("ignorelist", IGNORED);
         });
     if(IGNORED.indexOf(name) == -1) {
+        entry.removeClass("userlist-ignored");
         ignore.text("Ignore User");
     } else {
+        entry.addClass("userlist-ignored");
         ignore.text("Unignore User");
     }
 
@@ -642,6 +647,7 @@ function showUserOptions() {
     $("#us-sort-afk").prop("checked", USEROPTS.sort_afk);
     $("#us-blink-title").val(USEROPTS.blink_title);
     $("#us-ping-sound").val(USEROPTS.boop);
+    $("#us-notifications").val(USEROPTS.notifications);
     $("#us-sendbtn").prop("checked", USEROPTS.chatbtn);
     $("#us-no-emotes").prop("checked", USEROPTS.no_emotes);
     $("#us-strip-image").prop("checked", USEROPTS.strip_image);
@@ -649,6 +655,7 @@ function showUserOptions() {
 
     $("#us-modflair").prop("checked", USEROPTS.modhat);
     $("#us-shadowchat").prop("checked", USEROPTS.show_shadowchat);
+    $("#us-show-ip-in-tooltip").prop("checked", USEROPTS.show_ip_in_tooltip);
 
     formatScriptAccessPrefs();
 
@@ -662,6 +669,7 @@ function saveUserOptions() {
     USEROPTS.layout               = $("#us-layout").val();
     USEROPTS.ignore_channelcss    = $("#us-no-channelcss").prop("checked");
     USEROPTS.ignore_channeljs     = $("#us-no-channeljs").prop("checked");
+    USEROPTS.show_ip_in_tooltip   = $("#us-show-ip-in-tooltip").prop("checked");
 
     USEROPTS.synch                = $("#us-synch").prop("checked");
     USEROPTS.sync_accuracy        = parseFloat($("#us-synch-accuracy").val()) || 2;
@@ -676,6 +684,7 @@ function saveUserOptions() {
     USEROPTS.sort_afk             = $("#us-sort-afk").prop("checked");
     USEROPTS.blink_title          = $("#us-blink-title").val();
     USEROPTS.boop                 = $("#us-ping-sound").val();
+    USEROPTS.notifications        = $("#us-notifications").val();
     USEROPTS.chatbtn              = $("#us-sendbtn").prop("checked");
     USEROPTS.no_emotes            = $("#us-no-emotes").prop("checked");
     USEROPTS.strip_image          = $("#us-strip-image").prop("checked");
@@ -756,6 +765,19 @@ function applyOpts() {
     } else {
         $("#modflair").removeClass("label-success")
             .addClass("label-default");
+    }
+
+    if (USEROPTS.notifications !== "never") {
+        if ("Notification" in window) {
+            Notification.requestPermission().then(function(permission) {
+                if (permission !== "granted") {
+                    USEROPTS.notifications = "never";
+                }
+            });
+        }
+        else {
+            USEROPTS.notifications = "never";
+        }
     }
 }
 
@@ -1296,6 +1318,14 @@ function parseMediaLink(url) {
         };
     }
 
+    // #790
+    if ((m = url.match(/twitch\.tv\/(?:.*?)\/clip\/([A-Za-z]+)/))) {
+        return {
+            id: m[1],
+            type: "tc"
+        }
+    }
+
     if((m = url.match(/twitch\.tv\/(?:.*?)\/([cv])\/(\d+)/))) {
         return {
             id: m[1] + m[2],
@@ -1379,6 +1409,7 @@ function parseMediaLink(url) {
         };
     }
 
+    // Deprecated as of December 2017
     if ((m = url.match(/vid\.me\/embedded\/([\w-]+)/)) ||
         (m = url.match(/vid\.me\/([\w-]+)/))) {
         return {
@@ -1401,6 +1432,7 @@ function parseMediaLink(url) {
         };
     }
 
+    // Deprecated as of July 2020
     if ((m = url.match(/\bmixer\.com\/([\w-]+)/))) {
         return {
             id: m[1],
@@ -1440,39 +1472,25 @@ function parseMediaLink(url) {
     /* Raw file */
     var tmp = url.split("?")[0];
     if (tmp.match(/^https?:\/\//)) {
-        if (tmp.match(/^http:/)) {
-            Callbacks.queueFail({
-                link: url,
-                msg: "Raw files must begin with 'https'.  Plain http is not supported."
-            });
-            throw new Error("ERROR_QUEUE_HTTP");
-        } else if (tmp.match(/\.json$/)) {
+        if (tmp.match(/\.json$/)) {
+            // Custom media manifest format
             return {
                 id: url,
                 type: "cm"
             };
-        } else if (tmp.match(/\.(mp4|flv|webm|og[gv]|mp3|mov|m4a)$/)) {
+        } else {
+            // Assume raw file (server will check)
             return {
                 id: url,
                 type: "fi"
             };
-        } else {
-            Callbacks.queueFail({
-                link: url,
-                msg: "The file you are attempting to queue does not match the supported " +
-                     "file extensions mp4, flv, webm, ogg, ogv, mp3, mov, m4a. " +
-                     "For more information about why other filetypes are not supported, " +
-                     "see https://git.io/va9g9"
-            });
-            // Lol I forgot about this hack
-            throw new Error("ERROR_QUEUE_UNSUPPORTED_EXTENSION");
         }
     }
 
-    return {
-        id: null,
-        type: null
-    };
+    throw new Error(
+        'Could not determine video type.  Check https://git.io/fjtOK for a list ' +
+        'of supported media providers.'
+    );
 }
 
 function sendVideoUpdate() {
@@ -1641,14 +1659,18 @@ function addChatMessage(data) {
 
     var isHighlight = false;
     if (CLIENT.name && data.username != CLIENT.name) {
-        if (data.msg.toLowerCase().indexOf(CLIENT.name.toLowerCase()) != -1) {
+        if (highlightsMe(data.msg)) {
             div.addClass("nick-highlight");
             isHighlight = true;
         }
     }
 
-    pingMessage(isHighlight);
+    pingMessage(isHighlight, data.username, $(div.children()[2]).text());
+}
 
+function highlightsMe(message) {
+    // TODO: distinguish between text and HTML attributes as noted in #819
+    return message.match(new RegExp("(^|\\b)" + CLIENT.name + "($|\\b)", "gi"));
 }
 
 function trimChatBuffer() {
@@ -1665,7 +1687,7 @@ function trimChatBuffer() {
     return count;
 }
 
-function pingMessage(isHighlight) {
+function pingMessage(isHighlight, notificationTitle, notificationBody) {
     if (!FOCUSED) {
         if (!TITLE_BLINK && (USEROPTS.blink_title === "always" ||
             USEROPTS.blink_title === "onlyping" && isHighlight)) {
@@ -1681,7 +1703,17 @@ function pingMessage(isHighlight) {
             isHighlight)) {
             CHATSOUND.play();
         }
+
+        if (USEROPTS.notifications === "always" || (USEROPTS.notifications === "onlyping" &&
+            isHighlight)) {
+            showDesktopNotification(notificationTitle, notificationBody);
+        }
     }
+}
+
+function showDesktopNotification(notificationTitle, notificationBody)
+{
+    new Notification(notificationTitle, {body: notificationBody, icon: null});
 }
 
 /* layouts */
@@ -2069,11 +2101,20 @@ function waitUntilDefined(obj, key, fn) {
     fn();
 }
 
-function chatDialog(div) {
+/*
+    God I hate supporting IE11
+    https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Functions/Default_parameters
+    https://caniuse.com/#search=default%20function
+
+    This would be the ideal:
+    function chatDialog(div, zin = "auto") {
+*/
+function chatDialog(div, zin) {
+    if(!zin){ zin = 'auto'; }
     var parent = $("<div/>").addClass("profile-box")
         .css({
             padding: "10px",
-            "z-index": "auto",
+            "z-index": zin,
             position: "absolute"
         })
         .appendTo($("#chatwrap"));
@@ -2758,7 +2799,7 @@ function initPm(user) {
     var buffer = $("<div/>").addClass("pm-buffer linewrap").appendTo(body);
     $("<hr/>").appendTo(body);
     var input = $("<input/>").addClass("form-control pm-input").attr("type", "text")
-        .attr("maxlength", 240)
+        .attr("maxlength", 320)
         .appendTo(body);
 
     input.keydown(function (ev) {
@@ -2786,6 +2827,14 @@ function initPm(user) {
                 meta: meta
             });
             input.val("");
+        } else if(ev.keyCode == 9) { // Tab completion
+            try {
+                chatTabComplete(ev.target);
+            } catch (error) {
+                console.error(error);
+            }
+            ev.preventDefault();
+            return false;
         }
     });
 

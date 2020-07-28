@@ -3,6 +3,7 @@ var tables = require("./database/tables");
 import * as Metrics from './metrics/metrics';
 import knex from 'knex';
 import { GlobalBanDB } from './db/globalban';
+import { MetadataCacheDB } from './database/metadata_cache';
 import { Summary, Counter } from 'prom-client';
 
 const LOGGER = require('@calzoneman/jsli')('database');
@@ -38,12 +39,11 @@ class Database {
                     password: Config.get('mysql.password'),
                     database: Config.get('mysql.database'),
                     multipleStatements: true, // Legacy thing
-                    charset: 'UTF8MB4_GENERAL_CI'
+                    charset: 'utf8mb4'
                 },
                 pool: {
                     min: Config.get('mysql.pool-size'),
-                    max: Config.get('mysql.pool-size'),
-                    refreshIdle: false
+                    max: Config.get('mysql.pool-size')
                 },
                 debug: !!process.env.KNEX_DEBUG
             };
@@ -80,8 +80,17 @@ module.exports.init = function (newDB) {
             .catch(error => {
                 LOGGER.error('Initial database connection failed: %s', error.stack);
                 process.exit(1);
-            }).then(() => {
-                process.nextTick(legacySetup);
+            })
+            .then(() => tables.initTables())
+            .then(() => {
+                require('./database/update').checkVersion();
+                module.exports.loadAnnouncement();
+                require('cytube-mediaquery/lib/provider/youtube').setCache(
+                    new MetadataCacheDB(db)
+                );
+            }).catch(error => {
+                LOGGER.error(error.stack);
+                process.exit(1);
             });
 };
 
@@ -96,16 +105,6 @@ module.exports.getGlobalBanDB = function getGlobalBanDB() {
 
     return globalBanDB;
 };
-
-function legacySetup() {
-    tables.init(module.exports.query, function (err) {
-        if (err) {
-            return;
-        }
-        require("./database/update").checkVersion();
-        module.exports.loadAnnouncement();
-    });
-}
 
 /**
  * Execute a database query

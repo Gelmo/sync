@@ -1,3 +1,77 @@
+2020-06-22
+==========
+
+Twitch has [updated their embed
+player](https://discuss.dev.twitch.tv/t/twitch-embedded-player-migration-timeline-update/25588),
+which adds new requirements for embedding Twitch:
+
+  1. The origin website must be served over HTTPS
+  2. The origin website must be served over the default port (i.e., the hostname
+     cannot include a port; https://example.com:8443 won't work)
+
+Additionally, third-party cookies must be enabled for whatever internal
+subdomains Twitch is using.
+
+CyTube now sets the parameters expected by Twitch, and displays an error message
+if it detects (1) or (2) above are not met.
+
+2020-02-15
+==========
+
+Old versions of CyTube defaulted to storing channel state in flatfiles located
+in the `chandump` directory.  The default was changed a while ago, and the
+flatfile storage mechanism has now been removed.
+
+Admins who have not already migrated their installation to the "database"
+channel storage type can do so by following these instructions:
+
+  1. Run `git checkout e3a9915b454b32e49d3871c94c839899f809520a` to temporarily
+     switch to temporarily revert to the previous version of the code that
+     supports the "file" channel storage type
+  2. Run `npm run build-server` to build the old version
+  3. Run `node lib/channel-storage/migrator.js |& tee migration.log` to migrate
+     channel state from files to the database
+  4. Inspect the output of the migration tool for errors
+  5. Set `channel-storage`/`type` to `"database"` in `config.yaml` and start the
+     server.  Load a channel to verify the migration worked as expected
+  6. Upgrade back to the latest version with `git checkout 3.0` and `npm run
+     build-server`
+  7. Remove the `channel-storage` block from `config.yaml` and remove the
+     `chandump` directory since it is no longer needed (you may wish to archive
+     it somewhere in case you later discover the migration didn't work as
+     expected).
+
+If you encounter any errors during the process, please file an issue on GitHub
+and attach the output of the migration tool (which if you use the above commands
+will be written to `migration.log`).
+
+2019-12-01
+==========
+
+In accordance with node v8 LTS becoming end-of-life on 2019-12-31, CyTube no
+longer supports v8.
+
+Please upgrade to v10 or v12 (active LTS); refer to
+https://nodejs.org/en/about/releases/ for the node.js support timelines.
+
+2018-12-07
+==========
+
+Users can now self-service request their account to be deleted, and it will be
+automatically purged after 7 days.  In order to send a notification email to
+the user about the request, copy the [email
+configuration](https://github.com/calzoneman/sync/blob/3.0/conf/example/email.toml#L43)
+to `conf/email.toml` (the same file used for password reset emails).
+
+2018-10-21
+==========
+
+The `sanitize-html` dependency has made a change that results in `"` no longer
+being replaced by `&quot;` when not inside an HTML attribute value.  This
+potentially breaks any chat filters matching quotes as `&quot;` (on my
+particular instance, this seems to be quite rare).  These filters will need to
+be updated in order to continue matching quotes.
+
 2018-08-27
 ==========
 

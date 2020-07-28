@@ -10,7 +10,6 @@ var CustomEmbedFilter = require("../customembed").filter;
 var XSS = require("../xss");
 import counters from '../counters';
 import { Counter } from 'prom-client';
-import * as Switches from '../switches';
 
 const LOGGER = require('@calzoneman/jsli')('playlist');
 
@@ -118,7 +117,7 @@ PlaylistModule.prototype = Object.create(ChannelModule.prototype);
 
 Object.defineProperty(PlaylistModule.prototype, "dirty", {
     get() {
-        return this._positionDirty || this._listDirty || !Switches.isActive("plDirtyCheck");
+        return this._positionDirty || this._listDirty;
     },
 
     set(val) {
@@ -160,9 +159,10 @@ PlaylistModule.prototype.load = function (data) {
             }
         } else if (item.media.type === "gd") {
             delete item.media.meta.gpdirect;
-        } else if (["vm", "jw"].includes(item.media.type)) {
+        } else if (["vm", "jw", "mx"].includes(item.media.type)) {
             // JW has been deprecated for a long time
             // VM shut down in December 2017
+            // Mixer shut down in July 2020
             LOGGER.warn(
                 "Dropping playlist item with deprecated type %s",
                 item.media.type
@@ -214,17 +214,13 @@ PlaylistModule.prototype.save = function (data) {
         time = this.current.media.currentTime;
     }
 
-    if (Switches.isActive("plDirtyCheck")) {
-        data.playlistPosition = {
-            index: pos,
-            time
-        };
+    data.playlistPosition = {
+        index: pos,
+        time
+    };
 
-        if (this._listDirty) {
-            data.playlist = { pl: arr, pos, time, externalPosition: true };
-        }
-    } else {
-        data.playlist = { pl: arr, pos, time };
+    if (this._listDirty) {
+        data.playlist = { pl: arr, pos, time, externalPosition: true };
     }
 };
 
@@ -394,10 +390,6 @@ PlaylistModule.prototype.handleQueue = function (user, data) {
 
     var id = data.id;
     var type = data.type;
-    if (type === "lib") {
-        LOGGER.warn("Outdated client: IP %s emitting queue with type=lib",
-                user.realip);
-    }
 
     if (data.pos !== "next" && data.pos !== "end") {
         return;
@@ -522,42 +514,18 @@ PlaylistModule.prototype.queueStandard = function (user, data) {
     this.channel.refCounter.ref("PlaylistModule::queueStandard");
     counters.add("playlist:queue:count", 1);
     this.semaphore.queue(function (lock) {
-        var lib = self.channel.modules.library;
-        if (lib && self.channel.is(Flags.C_REGISTERED) && !util.isLive(data.type)) {
-            // TODO: remove this check entirely once metrics are collected.
-            lib.getItem(data.id, function (err, item) {
-                if (err && err !== "Item not in library") {
-                    LOGGER.error("Failed to query for library item: %s", String(err));
-                } else if (err === "Item not in library") {
-                    counters.add("playlist:queue:library:miss", 1);
-                } else {
-                    // temp hack until all clients are updated.
-                    // previously, library search results would queue with
-                    // type "lib"; this has now been changed.
-                    data.type = item.type;
-                    counters.add("playlist:queue:library:hit", 1);
-                }
+        InfoGetter.getMedia(data.id, data.type, function (err, media) {
+            if (err) {
+                error(XSS.sanitizeText(String(err)));
+                self.channel.refCounter.unref("PlaylistModule::queueStandard");
+                return lock.release();
+            }
 
-                handleLookup();
+            self._addItem(media, data, user, function () {
+                lock.release();
+                self.channel.refCounter.unref("PlaylistModule::queueStandard");
             });
-        } else {
-            handleLookup();
-        }
-
-        function handleLookup() {
-            InfoGetter.getMedia(data.id, data.type, function (err, media) {
-                if (err) {
-                    error(XSS.sanitizeText(String(err)));
-                    self.channel.refCounter.unref("PlaylistModule::queueStandard");
-                    return lock.release();
-                }
-
-                self._addItem(media, data, user, function () {
-                    lock.release();
-                    self.channel.refCounter.unref("PlaylistModule::queueStandard");
-                });
-            });
-        }
+        });
     });
 };
 
@@ -776,6 +744,8 @@ PlaylistModule.prototype.handleShuffle = function (user) {
     this.channel.logger.log("[playlist] " + user.getName() + " shuffled the playlist");
 
     var pl = this.items.toArray(false);
+    let currentUid = this.current ? this.current.uid : null;
+    let currentTime = this.current ? this.current.media.currentTime : undefined;
     this.items.clear();
     this.semaphore.reset();
     while (pl.length > 0) {
@@ -786,7 +756,12 @@ PlaylistModule.prototype.handleShuffle = function (user) {
             queueby: pl[i].queueby
         });
 
-        this.items.append(item);
+        if (pl[i].uid === currentUid) {
+            this.items.prepend(item);
+        } else {
+            this.items.append(item);
+        }
+
         pl.splice(i, 1);
     }
     this._listDirty = true;
@@ -800,7 +775,7 @@ PlaylistModule.prototype.handleShuffle = function (user) {
             u.socket.emit("playlist", pl);
         }
     });
-    this.startPlayback();
+    this.startPlayback(currentTime);
 };
 
 /**
@@ -961,6 +936,11 @@ PlaylistModule.prototype._addItem = function (media, data, user, cb) {
         // Issue #766
         qfail("You don't have permission to add livestreams");
         return;
+    }
+
+    if (isNaN(media.seconds)) {
+        LOGGER.warn("Detected NaN duration for %j", media);
+        return qfail("Internal error: could not determine media duration");
     }
 
     if (data.maxlength > 0 && media.seconds > data.maxlength) {
